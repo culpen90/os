@@ -186,6 +186,8 @@ Return Value:
     PDEVICE PciChild;
     ULONG PciChildIndex;
     ULONG PreviousChildCount;
+    ULONG ReportedChildCount;
+    ULONG ReportedChildIndex;
     KSTATUS Status;
 
     ASSERT(KeGetRunLevel() == RunLevelLow);
@@ -300,13 +302,13 @@ Return Value:
                 if (!KSUCCESS(Status)) {
 
                     //
-                    // If the device failed because it does not have a _UID
-                    // method, it was probably trying to augment a real device
-                    // that's not there. Count that as success.
+                    // If the device failed because it does not have a _HID
+                    // method, then it cannot be enumerated by ACPI as an OS
+                    // device. Keep going with the other namespace children.
                     //
 
                     if (Status == STATUS_DEVICE_NOT_CONNECTED) {
-                        Status = STATUS_SUCCESS;
+                        continue;
                     }
 
                     goto EnumerateDeviceChildrenEnd;
@@ -343,6 +345,10 @@ Return Value:
                                       &(NewChildList[ChildIndex].Device));
 
                     if (!KSUCCESS(Status)) {
+                        if (Status == STATUS_DEVICE_NOT_CONNECTED) {
+                            continue;
+                        }
+
                         goto EnumerateDeviceChildrenEnd;
                     }
 
@@ -458,12 +464,19 @@ Return Value:
     // (ie the bus this device is actually on is non-enumerable).
     //
 
+    ReportedChildCount = 0;
+    for (ChildIndex = 0; ChildIndex < NamespaceChildCount; ChildIndex += 1) {
+        if (NewChildList[ChildIndex].Device != NULL) {
+            ReportedChildCount += 1;
+        }
+    }
+
     if ((Irp->U.QueryChildren.Children == NULL) &&
-        (NamespaceChildCount != 0)) {
+        (ReportedChildCount != 0)) {
 
         ASSERT(Irp->U.QueryChildren.ChildCount == 0);
 
-        Children = MmAllocatePagedPool(NamespaceChildCount * sizeof(PDEVICE),
+        Children = MmAllocatePagedPool(ReportedChildCount * sizeof(PDEVICE),
                                        ACPI_ALLOCATION_TAG);
 
         if (Children == NULL) {
@@ -471,17 +484,21 @@ Return Value:
             goto EnumerateDeviceChildrenEnd;
         }
 
+        ReportedChildIndex = 0;
         for (ChildIndex = 0;
              ChildIndex < NamespaceChildCount;
              ChildIndex += 1) {
 
-            ASSERT(NewChildList[ChildIndex].Device != NULL);
+            if (NewChildList[ChildIndex].Device == NULL) {
+                continue;
+            }
 
-            Children[ChildIndex] = NewChildList[ChildIndex].Device;
+            Children[ReportedChildIndex] = NewChildList[ChildIndex].Device;
+            ReportedChildIndex += 1;
         }
 
         Irp->U.QueryChildren.Children = Children;
-        Irp->U.QueryChildren.ChildCount = NamespaceChildCount;
+        Irp->U.QueryChildren.ChildCount = ReportedChildCount;
 
     //
     // ACPI is not the bus driver here. Check to see if this is a PCI bus. If
@@ -1625,7 +1642,7 @@ Return Value:
 
     STATUS_SUCCESS on success.
 
-    STATUS_DEVICE_NOT_CONNECTED if the ACPI device did not have a _UID method.
+    STATUS_DEVICE_NOT_CONNECTED if the ACPI device did not have a _HID method.
 
     Other status codes on error.
 
@@ -2479,7 +2496,7 @@ Return Value:
 
     STATUS_SUCCESS on success.
 
-    STATUS_DEVICE_NOT_CONNECTED if the ACPI device did not have a _UID method.
+    STATUS_DEVICE_NOT_CONNECTED if the ACPI device did not have a _HID method.
 
     Other status codes on error.
 
@@ -2609,4 +2626,3 @@ Return Value:
 
     return FALSE;
 }
-
